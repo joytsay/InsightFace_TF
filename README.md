@@ -1,13 +1,13 @@
 ## Insight Face in TensorFlow
 
 #### Commands
-ˊˊˊ
+```
 pip install -r requirements.txt
 apt update
 apt install libgl1-mesa-glx
 CUDA_VISIBLE_DEVICES=7 python train_nets.py --eval_db_path ../public/FR/insightface/datasets/faces_emore 
 CUDA_VISIBLE_DEVICES=7 python data/mx2tfrecords.py --bin_path ../public/FR/insightface/datasets/faces_emore/train.rec --idx_path ../public/FR/insightface/datasets/faces_emore/train.idx --tfrecords_file_path datasets/tfrecords
-ˊˊˊ
+```
 
 
 #### Tasks
