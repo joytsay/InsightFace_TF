@@ -81,45 +81,45 @@ def parse_function(example_proto):
 
 if __name__ == '__main__':
     # # define parameters
-    # id2range = {}
-    # data_shape = (3, 112, 112)
+    id2range = {}
+    data_shape = (3, 112, 112)
     args = parse_args()
-    # imgrec = mx.recordio.MXIndexedRecordIO(args.idx_path, args.bin_path, 'r')
-    # s = imgrec.read_idx(0)
-    # header, _ = mx.recordio.unpack(s)
-    # print(header.label)
-    # imgidx = list(range(1, int(header.label[0])))
-    # seq_identity = range(int(header.label[0]), int(header.label[1]))
-    # for identity in seq_identity:
-    #     s = imgrec.read_idx(identity)
-    #     header, _ = mx.recordio.unpack(s)
-    #     a, b = int(header.label[0]), int(header.label[1])
-    #     id2range[identity] = (a, b)
-    # print('id2range', len(id2range))
+    imgrec = mx.recordio.MXIndexedRecordIO(args.idx_path, args.bin_path, 'r')
+    s = imgrec.read_idx(0)
+    header, _ = mx.recordio.unpack(s)
+    print(header.label)
+    imgidx = list(range(1, int(header.label[0])))
+    seq_identity = range(int(header.label[0]), int(header.label[1]))
+    for identity in seq_identity:
+        s = imgrec.read_idx(identity)
+        header, _ = mx.recordio.unpack(s)
+        a, b = int(header.label[0]), int(header.label[1])
+        id2range[identity] = (a, b)
+    print('id2range', len(id2range))
 
     # # generate tfrecords
-    # mx2tfrecords(imgidx, imgrec, args)
+    mx2tfrecords(imgidx, imgrec, args)
 
-    config = tf.ConfigProto(allow_soft_placement=True)
-    sess = tf.Session(config=config)
-    # training datasets api config
-    tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
-    dataset = tf.data.TFRecordDataset(tfrecords_f)
-    dataset = dataset.map(parse_function)
-    dataset = dataset.shuffle(buffer_size=30000)
-    dataset = dataset.batch(32)
-    iterator = dataset.make_initializable_iterator()
-    next_element = iterator.get_next()
-    # begin iteration
-    for i in range(1000):
-        sess.run(iterator.initializer)
-        while True:
-            try:
-                images, labels = sess.run(next_element)
-                cv2.imshow('test', images[1, ...])
-                cv2.waitKey(0)
-            except tf.errors.OutOfRangeError:
-                print("End of dataset")
+    # config = tf.ConfigProto(allow_soft_placement=True)
+    # sess = tf.Session(config=config)
+    # # training datasets api config
+    # tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
+    # dataset = tf.data.TFRecordDataset(tfrecords_f)
+    # dataset = dataset.map(parse_function)
+    # dataset = dataset.shuffle(buffer_size=30000)
+    # dataset = dataset.batch(32)
+    # iterator = dataset.make_initializable_iterator()
+    # next_element = iterator.get_next()
+    # # begin iteration
+    # for i in range(1000):
+    #     sess.run(iterator.initializer)
+    #     while True:
+    #         try:
+    #             images, labels = sess.run(next_element)
+    #             cv2.imshow('test', images[1, ...])
+    #             cv2.waitKey(0)
+    #         except tf.errors.OutOfRangeError:
+    #             print("End of dataset")
 
 
 
