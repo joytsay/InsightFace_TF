@@ -112,10 +112,10 @@ def combine_loss_val(embedding, labels, w_init, out_num, margin_a, margin_m, mar
             if margin_b > 0.0:
                 body = body - margin_b
             new_zy = body * s
-    updated_logits = tf.add(zy, tf.scatter_nd(ordinal_y, tf.subtract(new_zy, sel_cos_t), zy.get_shape()))
+    updated_logits = tf.add(zy, tf.scatter_nd(ordinal_y, tf.subtract(new_zy, sel_cos_t), zy.get_shape()), name='combine_loss_val')
     loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=updated_logits))
     predict_cls = tf.argmax(updated_logits, 1)
     accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.cast(predict_cls, tf.int64), tf.cast(labels, tf.int64)), 'float'))
     predict_cls_s = tf.argmax(zy, 1)
     accuracy_s = tf.reduce_mean(tf.cast(tf.equal(tf.cast(predict_cls_s, tf.int64), tf.cast(labels, tf.int64)), 'float'))
-    return zy, loss, accuracy, accuracy_s, predict_cls_s
+    return updated_logits, zy, loss, accuracy, accuracy_s, predict_cls_s

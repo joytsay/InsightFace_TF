@@ -1,37 +1,40 @@
 import tensorflow as tf
 import tensorlayer as tl
+import tensorflow.contrib.slim as slim
 import argparse
 from data.mx2tfrecords import parse_function
 import os
 from nets.L_Resnet_E_IR_MGPU import get_resnet
+# from losses.face_losses import combine_loss_val
 from losses.face_losses import arcface_loss
 import time
 from data.eval_data_reader import load_bin
 from verification import ver_test
 
-
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
     parser.add_argument('--net_depth', default=100, help='resnet depth, default is 50')
     parser.add_argument('--epoch', default=100000, help='epoch to train the network')
-    parser.add_argument('--batch_size', default=64, help='batch size to train network')
-    parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
+    parser.add_argument('--batch_size', default=64, help='batch size to train network')#184
+    parser.add_argument('--lr_steps', default=[320000, 340000, 360000, 380000, 400000, 420000], help='learning rate to train network') #40000, 60000, 80000
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
-    # parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['lfw', 'cfp_fp'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['lfw', 'cfp_fp', 'agedb_30'], help='evluation datasets')
+    # parser.add_argument('--eval_datasets', default=[], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
+    #parser.add_argument('--eval_db_path', default='./datasets/faces_glint', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
-    parser.add_argument('--num_output', default=85164, help='the image size')
-    parser.add_argument('--tfrecords_file_path', default='./datasets/tfrecords', type=str,
+    parser.add_argument('--num_output', default=85742, help='the image size') # MS1M 85742 Glint 180855
+    parser.add_argument('--tfrecords_file_path', default='./datasets/tfrecordsMS1M', type=str,
                         help='path to the output of tfrecords file path')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--saver_maxkeep', default=100, help='tf.train.Saver max keep ckpt files')
-    parser.add_argument('--buffer_size', default=100000, help='tf dataset api buffer size')
+    # parser.add_argument('--buffer_size', default=20000, help='tf dataset api buffer size') #100000
+    parser.add_argument('--buffer_size', default=100000, help='tf dataset api buffer size') #100000
     parser.add_argument('--log_device_mapping', default=False, help='show device placement log')
     parser.add_argument('--summary_interval', default=300, help='interval to save summary')
-    parser.add_argument('--ckpt_interval', default=5000, help='intervals to save ckpt file')
+    parser.add_argument('--ckpt_interval', default=2000, help='intervals to save ckpt file')
     parser.add_argument('--validate_interval', default=2000, help='intervals to save ckpt file')
     parser.add_argument('--show_info_interval', default=20, help='intervals to show information')
     parser.add_argument('--num_gpus', default=2, help='the num of gpus')
@@ -79,27 +82,31 @@ def average_gradients(tower_grads):
 
 
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,4"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "4,5"
     # 1. define global parameters
     args = get_parser()
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
-    inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
+    # inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
     images = tf.placeholder(name='img_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
     images_test = tf.placeholder(name='img_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
     labels = tf.placeholder(name='img_labels', shape=[None, ], dtype=tf.int64)
     dropout_rate = tf.placeholder(name='dropout_rate', dtype=tf.float32)
     # splits input to different gpu
-    images_s = tf.split(images, num_or_size_splits=args.num_gpus, axis=0)
-    labels_s = tf.split(labels, num_or_size_splits=args.num_gpus, axis=0)
+    # images_s = tf.split(images, num_or_size_splits=args.num_gpus, axis=0)
+    # labels_s = tf.split(labels, num_or_size_splits=args.num_gpus, axis=0)
+    images_s = tf.split(images, [32, 32, 0])
+    labels_s = tf.split(labels, [32, 32, 0])
     # 2 prepare train datasets and test datasets by using tensorflow dataset api
     # 2.1 train datasets
     # the image is substracted 127.5 and multiplied 1/128.
     # random flip left right
     tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
     dataset = tf.data.TFRecordDataset(tfrecords_f)
+    dataset = dataset.shuffle(buffer_size=args.buffer_size, reshuffle_each_iteration=True)
     dataset = dataset.map(parse_function)
-    dataset = dataset.shuffle(buffer_size=args.buffer_size)
-    dataset = dataset.batch(args.batch_size)
+    dataset = dataset.batch(args.batch_size, drop_remainder=True)
+    dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     iterator = dataset.make_initializable_iterator()
     next_element = iterator.get_next()
     # 2.2 prepare validate datasets
@@ -117,11 +124,13 @@ if __name__ == '__main__':
     p = int(512.0/args.batch_size)
     lr_steps = [p*val for val in args.lr_steps]
     print('learning rate steps: ', lr_steps)
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001],
-                                     name='lr_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001, 0.000005, 0.000003, 0.000001],
+                                     name='lr_schedule') #0.001, 0.0005, 0.0003, 0.0001
+    print('lr: ', lr)
     # 3.3 define the optimize method
-    opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
-
+    # opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
+    opt = tf.train.GradientDescentOptimizer(learning_rate=lr)
+    # opt = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9, beta2=0.999)
     # Calculate the gradients for each model tower.
     tower_grads = []
     tl.layers.set_name_reuse(True)
@@ -134,6 +143,7 @@ if __name__ == '__main__':
           with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
             net = get_resnet(images_s[i], args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
             logit = arcface_loss(embedding=net.outputs, labels=labels_s[i], w_init=w_init_method, out_num=args.num_output)
+            # logit, _, _, _, _, _ = combine_loss_val(embedding=net.outputs, labels=labels_s[i], w_init=w_init_method, out_num=args.num_output, margin_a=1.0, margin_m=0.3, margin_b=0.2, s=64)
             # Reuse variables for the next tower.
             tf.get_variable_scope().reuse_variables()
             # define the cross entropy
@@ -184,18 +194,41 @@ if __name__ == '__main__':
             summaries.append(tf.summary.histogram(var.op.name + '/gradients', grad))
     # add trainabel variable gradients
     for var in tf.trainable_variables():
-        summaries.append(tf.summary.histogram(var.op.name, var))
+        if var is not None:
+            summaries.append(tf.summary.histogram(var.op.name, var))
     # add loss summary
     for keys, val in loss_dict.items():
-        summaries.append(tf.summary.scalar(keys, val))
+        if keys is not None:
+            summaries.append(tf.summary.scalar(keys, val))
     # add learning rate
     summaries.append(tf.summary.scalar('leraning_rate', lr))
-    summary_op = tf.summary.merge(summaries)
+    # add image
+    # summaryImage = tf.reshape(images, [-1, 112, 112, 3])
+    # b, g, r = tf.split(summaryImage, num_or_size_splits=3, axis=-1)
+    # summaryImage = tf.concat([r, g, b], axis=-1)
+    # summaries.append(tf.summary.image('images', summaryImage, max_outputs=25))
 
+    # summaryImageTest = tf.reshape(images_test, [-1, 112, 112, 3])
+    # b, g, r = tf.split(summaryImageTest, num_or_size_splits=3, axis=-1)
+    # summaryImageTest = tf.concat([r, g, b], axis=-1)
+    # summaries.append(tf.summary.image('images', summaryImageTest))
+
+    # append summaries to op
+    summary_op = tf.summary.merge(summaries)
     # Create a saver.
     saver = tf.train.Saver(tf.global_variables())
+
     # init all variables
     sess.run(tf.global_variables_initializer())
+
+    # Restore checkpoint
+    # exclude = ['embedding_weights']
+    # variables_to_restore = slim.get_variables_to_restore(exclude=exclude)
+    # restore_saver = tf.train.Saver(variables_to_restore)
+    restore_saver = tf.train.Saver()
+    restore_saver.restore(sess, 'output/ckpt/InsightFace_iter_64000.ckpt')
+    # restore_saver.restore(sess, 'output/ckpt/resnet_v1_101.ckpt')
+
     # begin iteration
     count = 0
     for i in range(args.epoch):
@@ -205,14 +238,32 @@ if __name__ == '__main__':
                 images_train, labels_train = sess.run(next_element)
                 feed_dict = {images: images_train, labels: labels_train, dropout_rate: 0.4}
                 start = time.time()
-                _, _, inference_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_1, inference_loss_val_gpu_2, \
-                wd_loss_val_gpu_2, total_loss_gpu_2, acc_val = sess.run([train_op, inc_op, loss_dict[loss_keys[0]],
-                                                                         loss_dict[loss_keys[1]],
-                                                                         loss_dict[loss_keys[2]],
-                                                                         loss_dict[loss_keys[3]],
-                                                                         loss_dict[loss_keys[4]],
-                                                                         loss_dict[loss_keys[5]], acc],
-                                                                         feed_dict=feed_dict)
+    #             _, inference_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_1, \
+    #                   inference_loss_val_gpu_2, wd_loss_val_gpu_2, total_loss_gpu_2, \
+    #                   inference_loss_val_gpu_3, wd_loss_val_gpu_3, total_loss_gpu_3, \
+    #                   inference_loss_val_gpu_4, wd_loss_val_gpu_4, total_loss_gpu_4, \
+				# acc_val, global_count = sess.run([train_op, loss_dict[loss_keys[0]],
+    #                                                                      loss_dict[loss_keys[1]],
+    #                                                                      loss_dict[loss_keys[2]],
+    #                                                                      loss_dict[loss_keys[3]],
+    #                                                                      loss_dict[loss_keys[4]],
+    #                                                                      loss_dict[loss_keys[5]],
+    #                                                                      loss_dict[loss_keys[6]],
+    #                                                                      loss_dict[loss_keys[7]],
+    #                                                                      loss_dict[loss_keys[8]],
+    #                                                                      loss_dict[loss_keys[9]],
+    #                                                                      loss_dict[loss_keys[10]],
+    #                                                                      loss_dict[loss_keys[11]], acc, global_step],
+    #                                                                      feed_dict=feed_dict)
+
+                _, inference_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_1, inference_loss_val_gpu_2, \
+                wd_loss_val_gpu_2, total_loss_gpu_2, acc_val, global_count = sess.run([train_op, loss_dict[loss_keys[0]],
+                                                                        loss_dict[loss_keys[1]],
+                                                                        loss_dict[loss_keys[2]],
+                                                                        loss_dict[loss_keys[3]],
+                                                                        loss_dict[loss_keys[4]],
+                                                                        loss_dict[loss_keys[5]], acc, global_step],
+                                                                        feed_dict=feed_dict)
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 # print training information
@@ -223,10 +274,15 @@ if __name__ == '__main__':
                     #       (i, count, total_loss_gpu_1, inference_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_2,
                     #        inference_loss_val_gpu_2, wd_loss_val_gpu_2, acc_val, pre_sec))
 
-                    print('epoch %d, total_step %d, total loss: [%.2f, %.2f], inference loss: [%.2f, %.2f], weight deacy '
-                          'loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_gpu_1, total_loss_gpu_2, inference_loss_val_gpu_1, inference_loss_val_gpu_2,
-                           wd_loss_val_gpu_1, wd_loss_val_gpu_2, acc_val, pre_sec))
+                    print('epoch %d, total_step %d, global_step %d, total loss: [%.2f, %.2f], inference loss: [%.2f, %.2f], weight deacy '
+                         'loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
+                         (i, count, global_count, total_loss_gpu_1, total_loss_gpu_2, inference_loss_val_gpu_1, inference_loss_val_gpu_2,
+                          wd_loss_val_gpu_1, wd_loss_val_gpu_2, acc_val, pre_sec))
+
+                    # print('epoch %d, total_step %d, global_step %d, total loss: [%.2f, %.2f, %.2f, %.2f], inference loss: [%.2f, %.2f, %.2f, %.2f], weight deacy '
+                    #       'loss: [%.2f, %.2f, %.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
+                    #       (i, count, global_count, total_loss_gpu_1, total_loss_gpu_2,total_loss_gpu_3, total_loss_gpu_4, inference_loss_val_gpu_1, inference_loss_val_gpu_2, inference_loss_val_gpu_3, inference_loss_val_gpu_4,
+                    #        wd_loss_val_gpu_1, wd_loss_val_gpu_2,wd_loss_val_gpu_3, wd_loss_val_gpu_4, acc_val, pre_sec))
                 count += 1
 
                 # save summary
@@ -254,3 +310,6 @@ if __name__ == '__main__':
             except tf.errors.OutOfRangeError:
                 print("End of epoch %d" % i)
                 break
+            # except tf.errors.InvalidArgumentError:
+            #     print("InvalidArgumentError End of epoch %d, images_train size:%d, labels_train size:%d" % (i,len(images_train), len(labels_train)))
+            #     break

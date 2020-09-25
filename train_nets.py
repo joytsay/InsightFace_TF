@@ -15,27 +15,27 @@ from verification import ver_test
 
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
-    parser.add_argument('--net_depth', default=100, help='resnet depth, default is 50')
+    parser.add_argument('--net_depth', default=100, help='resnet depth, default is 100')
     parser.add_argument('--epoch', default=100000, help='epoch to train the network')
-    parser.add_argument('--batch_size', default=32, help='batch size to train network')
-    parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
+    parser.add_argument('--batch_size', default=144, help='batch size to train network')
+    parser.add_argument('--lr_steps', default=[200000, 220000, 240000], help='learning rate to train network')#40000, 60000, 80000
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
-    # parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['lfw', 'cfp_fp', 'agedb_30'], help='evluation datasets')
+    # parser.add_argument('--eval_datasets', default=[], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
-    parser.add_argument('--num_output', default=85164, help='the image size')
-    parser.add_argument('--tfrecords_file_path', default='./datasets/tfrecords', type=str,
+    parser.add_argument('--num_output', default=85742, help='the image size')
+    parser.add_argument('--tfrecords_file_path', default='./datasets/tfrecordsMS1M', type=str,
                         help='path to the output of tfrecords file path')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
-    parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
-    parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
+    parser.add_argument('--ckpt_path', default='./output/ckptTest', help='the ckpt file save path')
+    parser.add_argument('--log_file_path', default='./output/logsTest', help='the ckpt file save path')
     parser.add_argument('--saver_maxkeep', default=100, help='tf.train.Saver max keep ckpt files')
     parser.add_argument('--buffer_size', default=10000, help='tf dataset api buffer size')
     parser.add_argument('--log_device_mapping', default=False, help='show device placement log')
     parser.add_argument('--summary_interval', default=300, help='interval to save summary')
-    parser.add_argument('--ckpt_interval', default=10000, help='intervals to save ckpt file')
+    parser.add_argument('--ckpt_interval', default=2000, help='intervals to save ckpt file')
     parser.add_argument('--validate_interval', default=2000, help='intervals to save ckpt file')
     parser.add_argument('--show_info_interval', default=20, help='intervals to save ckpt file')
     args = parser.parse_args()
@@ -43,7 +43,7 @@ def get_parser():
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "4"
     # 1. define global parameters
     args = get_parser()
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
@@ -58,9 +58,10 @@ if __name__ == '__main__':
     # random flip left right
     tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
     dataset = tf.data.TFRecordDataset(tfrecords_f)
-    dataset = dataset.map(parse_function)
-    dataset = dataset.shuffle(buffer_size=args.buffer_size)
-    dataset = dataset.batch(args.batch_size)
+    dataset = dataset.map(parse_function).shuffle(buffer_size=args.buffer_size).batch(args.batch_size).prefetch(args.batch_size)
+    # dataset = dataset.map(parse_function)
+    # dataset = dataset.shuffle(buffer_size=args.buffer_size)
+    # dataset = dataset.batch(args.batch_size)
     iterator = dataset.make_initializable_iterator()
     next_element = iterator.get_next()
     # 2.2 prepare validate datasets
@@ -110,9 +111,10 @@ if __name__ == '__main__':
     p = int(512.0/args.batch_size)
     lr_steps = [p*val for val in args.lr_steps]
     print(lr_steps)
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001], name='lr_schedule') #0.001, 0.0005, 0.0003, 0.0001
     # 3.7 define the optimize method
-    opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
+    # opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
+    opt = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9, beta2=0.999)
     # 3.8 get train op
     grads = opt.compute_gradients(total_loss)
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -143,11 +145,22 @@ if __name__ == '__main__':
     summaries.append(tf.summary.scalar('total_loss', total_loss))
     # 3.11.4 add learning rate
     summaries.append(tf.summary.scalar('leraning_rate', lr))
+    # 3.11.5 add Image
+    summaryImage = tf.reshape(images, [-1, 112, 112, 3])
+    b, g, r = tf.split(summaryImage, num_or_size_splits=3, axis=-1)
+    summaryImage = tf.concat([r, g, b], axis=-1)
+    summaries.append(tf.summary.image('images', summaryImage))
+    # 3.11.6 append summaries to op
     summary_op = tf.summary.merge(summaries)
     # 3.12 saver
     saver = tf.train.Saver(max_to_keep=args.saver_maxkeep)
     # 3.13 init all variables
     sess.run(tf.global_variables_initializer())
+
+    # exclude = ['']
+    # variables_to_restore = slim.get_variables_to_restore(exclude=exclude)
+    restore_saver = tf.train.Saver()
+    restore_saver.restore(sess, 'output/ckpt/InsightFace_iter_70000.ckpt')
 
     # restore_saver = tf.train.Saver()
     # restore_saver.restore(sess, '/home/aurora/workspaces2018/InsightFace_TF/output/ckpt/InsightFace_iter_1110000.ckpt')
@@ -195,7 +208,7 @@ if __name__ == '__main__':
                     saver.save(sess, filename)
 
                 # validate
-                if count > 0 and count % args.validate_interval == 0:
+                if count > 0 and (count % args.validate_interval == 0): # or count == args.show_info_interval
                     feed_dict_test ={dropout_rate: 1.0}
                     feed_dict_test.update(tl.utils.dict_to_one(net.all_drop))
                     results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess,
@@ -219,6 +232,9 @@ if __name__ == '__main__':
                         log_file.flush()
             except tf.errors.OutOfRangeError:
                 print("End of epoch %d" % i)
+                break
+            except tf.errors.InvalidArgumentError:
+                print("InvalidArgumentError End of epoch %d, images_train size:%d, labels_train size:%d" % (i,len(images_train), len(labels_train)))
                 break
     log_file.close()
     log_file.write('\n')

@@ -17,7 +17,7 @@ def parse_args():
                         help='path to the binary image file')
     parser.add_argument('--idx_path', default='../datasets/faces_ms1m_112x112/train.idx', type=str,
                         help='path to the image index path')
-    parser.add_argument('--tfrecords_file_path', default='../datasets/tfrecords', type=str,
+    parser.add_argument('--tfrecords_file_path', default='../datasets/tfrecordsMS1Mtest', type=str,
                         help='path to the output of tfrecords file path')
     args = parser.parse_args()
     return args
@@ -31,9 +31,16 @@ def mx2tfrecords_old(imgidx, imgrec, args):
         header, img = mx.recordio.unpack(img_info)
         encoded_jpg_io = io.BytesIO(img)
         image = PIL.Image.open(encoded_jpg_io)
-        np_img = np.array(image)
-        img = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
+        # oriImgName = "crop/{}_ori.jpg".format(i)
+        # print(oriImgName)
+        # image.save(oriImgName, "JPEG", quality=80, optimize=True, progressive=True)
+        # np_img = np.array(image)
+        # img = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
+        # enrollName = "crop/{}_img.jpg".format(i)
+        # print(enrollName)
+        # cv2.imwrite(enrollName,img)
         img_raw = img.tobytes()
+        #label = int(header.label.item(0))
         label = int(header.label)
         example = tf.train.Example(features=tf.train.Features(feature={
             'image_raw': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_raw])),
@@ -51,7 +58,8 @@ def mx2tfrecords(imgidx, imgrec, args):
     for i in imgidx:
         img_info = imgrec.read_idx(i)
         header, img = mx.recordio.unpack(img_info)
-        label = int(header.label)
+        label = int(header.label.item(0))
+        #label = int(header.label)
         example = tf.train.Example(features=tf.train.Features(feature={
             'image_raw': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img])),
             "label": tf.train.Feature(int64_list=tf.train.Int64List(value=[label]))
@@ -87,9 +95,11 @@ if __name__ == '__main__':
     imgrec = mx.recordio.MXIndexedRecordIO(args.idx_path, args.bin_path, 'r')
     s = imgrec.read_idx(0)
     header, _ = mx.recordio.unpack(s)
-    print(header.label)
+    print(header.label.item(0))
     imgidx = list(range(1, int(header.label[0])))
+    print('imgidx', len(imgidx))
     seq_identity = range(int(header.label[0]), int(header.label[1]))
+    print('seq_identity', len(seq_identity))
     for identity in seq_identity:
         s = imgrec.read_idx(identity)
         header, _ = mx.recordio.unpack(s)
@@ -98,7 +108,7 @@ if __name__ == '__main__':
     print('id2range', len(id2range))
 
     # # generate tfrecords
-    mx2tfrecords(imgidx, imgrec, args)
+    mx2tfrecords_old(imgidx, imgrec, args)
 
     # config = tf.ConfigProto(allow_soft_placement=True)
     # sess = tf.Session(config=config)
